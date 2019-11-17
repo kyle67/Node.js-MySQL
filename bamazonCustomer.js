@@ -104,7 +104,7 @@ function moreShopping() {
 
 function readProducts() {
 	connection.query("SELECT * FROM products WHERE stock_quantity > 0", function(err, res) {
-		if (err) throw err;
+		if (err) console.log("Oops...Something went wrong");
 		// Log all results of the SELECT statement
 		console.log("+----+------------------------------------------+------------------+----------+");
 		console.log("|  # | NAME                                     | DEPARTMENT       | PRICE    |");
