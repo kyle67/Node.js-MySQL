@@ -1,113 +1,100 @@
-var mysql = require('mysql');
-var inquirer = require('inquirer');
-var connection = require('./Connect/connect.js');
+// Requiring our dependencies
+var mysql = require("mysql");
+var inquirer = require("inquirer");
+require("console.table");
 
-startSupervisor();
+// Configuring our connection to our database
+var connection = mysql.createConnection({
+  host: "localhost",
+  port: 3306,
+  user: "root",
+  password: "docker",
+  database: "bamazon"
+});
 
-function startSupervisor() {
+// Connecting to our database, running makeTable which will start the app
+connection.connect(function(err) {
+  if (err) throw err;
+  console.log("connection successful!");
+  makeTable();
+});
 
-	inquirer.prompt([
-		{
-			name: "choice",
-			type: "list",
-			choices: ["View Product Sales By Department", "Create New Department", "Quit"],
-			message: "What would you like to do?"
-		}
-	])
-	.then(function(answer) {
-		if(answer.choice === "View Product Sales By Department") {
-			viewProductSales();
-		}
-		else if(answer.choice === "Create New Department") {
-			createDepartment();
-		}
-		else {
-			console.log("Session End\n");
-			connection.end();
-		}
-	});
+function makeTable() {
+  // Displaying an initial list of products for the user, calling promptSupervisor
+  connection.query("SELECT * FROM products", function(err, res) {
+    if (err) throw err;
+    console.table(res);
+    promptSupervisor();
+  });
 }
 
-// View Product Sales By Department
-function viewProductSales() {
-
-	let supervisorData = "SELECT departments.department_id, departments.department_name, departments.overhead_costs, SUM(products.product_sales) AS total_sales " + "FROM departments LEFT JOIN products ON departments.department_id = products.department_id " + "GROUP BY departments.department_name ORDER BY total_sales DESC";
-
-	connection.query(supervisorData, function(err, res) {
-		if (err) throw err;
-		console.log("+----+-----------------------------+----------------+---------------+--------------+");
-		console.log("| ID | DEPARTMENT NAME             | OVERHEAD COSTS | PRODUCT SALES | TOTAL PROFIT |");
-		console.log("+----+-----------------------------+----------------+---------------+--------------+");
-		// Display all available items, including itemID, name, price, quantity
-		for (let i = 0; i < res.length; i++) {
-			let department_id = res[i].department_id.toString();
-			let department_name = res[i].department_name;
-			let overhead_costs = res[i].overhead_costs.toString();
-			let product_sales;
-			if(res[i].total_sales === null) {
-				product_sales = "0";
-			}
-			else {
-				product_sales = parseFloat(res[i].total_sales).toFixed(2).toString();
-			}
-			let total_profit = (parseFloat(product_sales) - parseFloat(overhead_costs)).toFixed(2).toString();
-
-			while(department_id.length < 2) {
-				department_id = " " + department_id;
-			}
-			while(department_name.length < 27) {
-				department_name = department_name + " ";
-			}
-			while(overhead_costs.length < 14) {
-				overhead_costs = " " + overhead_costs;
-			}
-			while(product_sales.length < 13) {
-				product_sales = " " + product_sales;
-			}
-			while(total_profit.length < 12) {
-				total_profit = " " + total_profit;
-			}			
-			console.log("| " + department_id + " | " + department_name + " | " + overhead_costs + " | " + product_sales + " | " + total_profit + " |");
-		}
-		console.log("+----+-----------------------------+----------------+---------------+--------------+\n");
-		startSupervisor();
-	});
+function promptSupervisor() {
+  // Giving the user some options for what to do next
+  inquirer
+    .prompt([
+      {
+        type: "list",
+        name: "choice",
+        message: "What would you like to do?",
+        choices: ["View Product Sales by Department", "Create New Department", "Quit"]
+      }
+    ])
+    .then(function(val) {
+      // Checking to see what option the user chose and running the appropriate function
+      if (val.choice === "View Product Sales by Department") {
+        viewSales();
+      }
+      else if (val.choice === "Create New Department") {
+        addDepartment();
+      }
+      else {
+        console.log("Goodbye!");
+        process.exit(0);
+      }
+    });
 }
 
-// Add New Product
-function createDepartment() {
-	inquirer.prompt([
-		{
-			name: "department_name",
-			type: "input",
-			message: "What is the name of the new department?"
-		},
-		{
-			name: "overhead_costs",
-			type: "input",
-			message: "What is the overhead of this department? (Please only input a number.)",
-			validate: function(value) {
-				if (isNaN(value) === false) {
-					return true;
-				}
-				return false;
-			}
-		}
-	])
-	.then(function(answer) {
-		connection.query(
-			"INSERT INTO departments (department_name, overhead_costs) VALUES ('" + answer.department_name + "', '" + answer.overhead_costs + "')",
-			function(error) {
-				if (error) {
-					console.log(error);
-					throw error;
-				}
-				console.log("You have added a " + answer.department_name + " department with an overhead cost of $" + answer.overhead_costs + ".\n");
-				startSupervisor();
-			}
-		);
-	});
-
+function addDepartment() {
+  // Asking the user about the department they would like to add
+  inquirer
+    .prompt([
+      {
+        type: "input",
+        name: "name",
+        message: "What is the name of the department?"
+      },
+      {
+        type: "input",
+        name: "overhead",
+        message: "What is the overhead cost of the department?",
+        validate: function(val) {
+          return val > 0;
+        }
+      }
+    ])
+    .then(function(val) {
+      // Using the information the user provided to create a new department
+      connection.query(
+        "INSERT INTO departments (department_name, over_head_costs) VALUES (?, ?)",
+        [val.name, val.overhead],
+        function(err) {
+          if (err) throw err;
+          // If successful, alert the user, run makeTable again
+          console.log("ADDED DEPARTMENT!");
+          makeTable();
+        }
+      );
+    });
 }
 
-
+function viewSales() {
+  // Selects a few columns from the departments table, calculates a total_profit column
+  connection.query(
+    "SELECT departProd.department_id, departProd.department_name, departProd.over_head_costs, SUM(departProd.product_sales) as product_sales, (SUM(departProd.product_sales) - departProd.over_head_costs) as total_profit FROM (SELECT departments.department_id, departments.department_name, departments.over_head_costs, IFNULL(products.product_sales, 0) as product_sales FROM products RIGHT JOIN departments ON products.department_name = departments.department_name) as departProd GROUP BY department_id",
+    function(err, res) {
+      console.table(res);
+      promptSupervisor();
+    }
+  );
+}
+© 2019 GitHub, Inc.

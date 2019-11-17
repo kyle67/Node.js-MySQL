@@ -1,140 +1,136 @@
-var mysql = require('mysql');
-var inquirer = require('inquirer');
-var connection = require('./Connect/connect.js');
+// Initializes the npm packages used
+var mysql = require("mysql");
+var inquirer = require("inquirer");
+require("console.table");
 
-// connect to the mysql server and sql database
-connection.connect(function(err) {
-  if (err) throw err;
-  // run the start function after the connection is made to prompt the user
-  readProducts();
+// Initializes the connection variable to sync with a MySQL database
+var connection = mysql.createConnection({
+  host: "localhost",
+  port: 3306,
+
+  // Your username
+  user: "root",
+
+  // Your password
+  password: "docker",
+  database: "bamazon"
 });
 
-function buyItem() {
-	// query the database for all items with at least 1 in stock
-	connection.query("SELECT * FROM products WHERE stock_quantity > 0", function(err, results) {
-		if (err) throw err;
-		// once you have the items, prompt the user for which they'd like to buy
-		inquirer.prompt([
-			{
-				name: "choice",
-				type: "list",
-				choices: function() {
-					var choiceArray = [];
-					for (var i = 0; i < results.length; i++) {
-						choiceArray.push(results[i].product_name);
-					}
-					return choiceArray;
-				},
-				message: "What item would you like to purchase?"
-			},
-			{
-				name: "quantity",
-				type: "input",
-				message: "How many would you like to purchase?",
-				validate: function(value) {
-					if (isNaN(value) === false) {
-						return true;
-					}
-					return false;
-				}
-			}
-		])
-		.then(function(answer) {
-			// get the information of the chosen item
-			var chosenItem;
-			// REFACTOR: use Array#find instead of looping
-			for (var i = 0; i < results.length; i++) {
-				if (results[i].product_name === answer.choice) {
-					chosenItem = results[i];
-				}
-			}
+// Creates the connection with the server and loads the product data upon a successful connection
+connection.connect(function(err) {
+  if (err) {
+    console.error("error connecting: " + err.stack);
+  }
+  loadProducts();
+});
 
-			// determine if quantity is high enough
-			if (chosenItem.stock_quantity >= parseInt(answer.quantity)) {
-				// There is enough; reduce the stock in the database and provide the customer's total
-				var newQuantity = parseInt(chosenItem.stock_quantity) - parseInt(answer.quantity);
-				var totalPrice = parseFloat(chosenItem.price) * answer.quantity;
-				connection.query(
-					"UPDATE products SET ? WHERE ?",
-					[
-						{
-							stock_quantity: newQuantity,
-							product_sales: (parseFloat(chosenItem.product_sales) + parseFloat(totalPrice)).toFixed(2)
-						},
-						{
-							product_id: chosenItem.product_id
-						}
-					],
-					function(error) {
-						if (error) throw error;
-						console.log("Thanks for shopping! Your total is $" + totalPrice + ".\n");
-						moreShopping();
-					}
-				);
-			}
-			else {
-				// stock_quantity wasn't high enough, so apologize and start over
-				console.log("I'm sorry, we only have " + chosenItem.stock_quantity + " of those.\n");
-				moreShopping();
-			}
-		});
-	});
+// Function to load the products table from the database and print results to the console
+function loadProducts() {
+  // Selects all of the data from the MySQL products table
+  connection.query("SELECT * FROM products", function(err, res) {
+    if (err) throw err;
+
+    // Draw the table in the terminal using the response
+    console.table(res);
+
+    // Then prompt the customer for their choice of product, pass all the products to promptCustomerForItem
+    promptCustomerForItem(res);
+  });
 }
 
-function moreShopping() {
-	inquirer
-		.prompt([
-		{
-			name: "again",
-			type: "confirm",
-			message: "Would you like to continue shopping?\n"
-		}
-	])
-	.then(function(answer) {
-		if(answer.again) {
-			readProducts();
-		}
-		else {
-			console.log("Please come again soon!\n");
-			connection.end();
-		}
-	});	
+// Prompt the customer for a product ID
+function promptCustomerForItem(inventory) {
+  // Prompts user for what they would like to purchase
+  inquirer
+    .prompt([
+      {
+        type: "input",
+        name: "choice",
+        message: "What is the ID of the item you would you like to purchase? [Quit with Q]",
+        validate: function(val) {
+          return !isNaN(val) || val.toLowerCase() === "q";
+        }
+      }
+    ])
+    .then(function(val) {
+      // Check if the user wants to quit the program
+      checkIfShouldExit(val.choice);
+      var choiceId = parseInt(val.choice);
+      var product = checkInventory(choiceId, inventory);
+
+      // If there is a product with the id the user chose, prompt the customer for a desired quantity
+      if (product) {
+        // Pass the chosen product to promptCustomerForQuantity
+        promptCustomerForQuantity(product);
+      }
+      else {
+        // Otherwise let them know the item is not in the inventory, re-run loadProducts
+        console.log("\nThat item is not in the inventory.");
+        loadProducts();
+      }
+    });
 }
-//Object.keys(departmentList)
 
-function readProducts() {
-	connection.query("SELECT * FROM products WHERE stock_quantity > 0", function(err, res) {
-		if (err) console.log("Oops...Something went wrong");
-		// Log all results of the SELECT statement
-		console.log("+----+------------------------------------------+------------------+----------+");
-		console.log("|  # | NAME                                     | DEPARTMENT       | PRICE    |");
-		console.log("+----+------------------------------------------+------------------+----------+");
-		for (let i = 0; i < res.length; i++) {
-			let product_id = res[i].product_id.toString();
-			let product_name = res[i].product_name;
-			let department_id = res[i].department_id;
-			let department_name = '';
-            let price = "$" + res[i].price;
+// Prompt the customer for a product quantity
+function promptCustomerForQuantity(product) {
+  inquirer
+    .prompt([
+      {
+        type: "input",
+        name: "quantity",
+        message: "How many would you like? [Quit with Q]",
+        validate: function(val) {
+          return val > 0 || val.toLowerCase() === "q";
+        }
+      }
+    ])
+    .then(function(val) {
+      // Check if the user wants to quit the program
+      checkIfShouldExit(val.quantity);
+      var quantity = parseInt(val.quantity);
 
-			connection.query(`SELECT * FROM departments WHERE department_id = ${department_id}`, function(err, res) {
-                department_name = res[0].department_name;
+      // If there isn't enough of the chosen product and quantity, let the user know and re-run loadProducts
+      if (quantity > product.stock_quantity) {
+        console.log("\nInsufficient quantity!");
+        loadProducts();
+      }
+      else {
+        // Otherwise run makePurchase, give it the product information and desired quantity to purchase
+        makePurchase(product, quantity);
+      }
+    });
+}
 
-                while(product_id.length < 2) {
-                    product_id = " " + product_id;
-                }
-                while(product_name.length < 40) {
-                    product_name = product_name + " ";
-                }
+// Purchase the desired quanity of the desired item
+function makePurchase(product, quantity) {
+  connection.query(
+    "UPDATE products SET stock_quantity = stock_quantity - ?, product_sales = product_sales + ? WHERE item_id = ?",
+    [quantity, product.price * quantity, product.item_id],
+    function(err, res) {
+      // Let the user know the purchase was successful, re-run loadProducts
+      console.log("\nSuccessfully purchased " + quantity + " " + product.product_name + "'s!");
+      loadProducts();
+    }
+  );
+}
 
-                while(department_name.length < 16) {
-                    department_name = department_name + " ";
-                }
-                while(price.length < 8) {
-                    price = " " + price;
-                }
-                console.log("| " + product_id + " | " + product_name + " | " + department_name + " | " + price + " |");
-                console.log("+----+------------------------------------------+------------------+----------+");
-			});
-		}
-        buyItem();})
-	}
+// Check to see if the product the user chose exists in the inventory
+function checkInventory(choiceId, inventory) {
+  for (var i = 0; i < inventory.length; i++) {
+    if (inventory[i].item_id === choiceId) {
+      // If a matching product is found, return the product
+      return inventory[i];
+    }
+  }
+  // Otherwise return null
+  return null;
+}
+
+// Check to see if the user wants to quit the program
+function checkIfShouldExit(choice) {
+  if (choice.toLowerCase() === "q") {
+    // Log a message and exit the current node process
+    console.log("Goodbye!");
+    process.exit(0);
+  }
+}
